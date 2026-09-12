@@ -2,8 +2,6 @@ import os
 import re
 import json
 import requests
-import asyncio
-import edge_tts
 import subprocess
 from google import genai
 from google.genai import types
@@ -13,135 +11,121 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 PEXELS_KEY = os.getenv("PEXELS_API_KEY")
 
 if not GEMINI_KEY or not PEXELS_KEY:
-    raise ValueError("Missing GEMINI_API_KEY or PEXELS_API_KEY in environment variables.")
+    raise ValueError("Missing API keys. Check GitHub Secrets.")
 
-# 2. Configure Gemini Client
 client = genai.Client(api_key=GEMINI_KEY)
 
-TOPIC = os.getenv("VIDEO_TOPIC", "The Rise and Fall of Blockbuster")
-
 def generate_script(topic):
-    print(f"Generating documentary script for: {topic}...")
     prompt = f"""
-    You are an elite investigative business documentarian for the YouTube channel 'The Monopoly Files'.
-    Write a 3-scene documentary script about: "{topic}".
-    
-    Return your response strictly as valid JSON with no extra commentary or markdown backticks:
+    You are an elite investigative business documentarian.
+    Write a 3-scene documentary script about: {topic}
+
+    Return your response strictly as valid JSON matching this format:
     {{
-      "title": "Compelling Click-Worthy Title",
-      "description": "Engaging description with relevant hashtags.",
-      "scenes": [
-        {{
-          "scene_number": 1,
-          "narration": "Full narration text for this segment (around 40-50 words).",
-          "broll_keyword": "simple search term for stock video (e.g. office building, warehouse, money)"
-        }},
-        {{
-          "scene_number": 2,
-          "narration": "Full narration text for the turning point or crisis (around 40-50 words).",
-          "broll_keyword": "search term for stock video (e.g. stock market crash, closed store)"
-        }},
-        {{
-          "scene_number": 3,
-          "narration": "Full narration text for the takeaway or conclusion (around 40-50 words).",
-          "broll_keyword": "search term for stock video (e.g. handshake, technology, empty street)"
-        }}
-      ]
+        "title": "Compelling Title",
+        "description": "Engaging description",
+        "scenes": [
+            {{
+                "scene_number": 1,
+                "narration": "Full narration text...",
+                "broll_keyword": "simple search term for stock footage"
+            }}
+        ]
     }}
     """
+    
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
-            response_mime_type="application/json"
+            response_mime_type="application/json",
         )
     )
     return json.loads(response.text)
 
 def download_pexels_video(keyword, output_filename):
-    print(f"Searching Pexels for B-roll: {keyword}...")
+    print(f"Searching Pexels for B-roll: {keyword}")
     headers = {"Authorization": PEXELS_KEY}
-    url = f"https://api.pexels.com/videos/search?query={keyword}&per_page=1&orientation=landscape"
-    res = requests.get(url, headers=headers).json()
+    url = f"https://api.pexels.com/videos/search?query={keyword}&per_page=15&orientation=landscape&size=medium"
+    res = requests.get(url, headers=headers)
+    res.raise_for_status()
     
-    video_files = res.get("videos", [{}])[0].get("video_files", [])
-    selected_video = None
-    for vf in video_files:
-        if vf.get("width") == 1920 or vf.get("height") == 1080:
-            selected_video = vf.get("link")
-            break
-    if not selected_video and video_files:
-        selected_video = video_files[0].get("link")
+    data = res.json()
+    if not data.get("videos"):
+        print(f"No video found for {keyword}, skipping...")
+        return False
         
-    if not selected_video:
-        raise Exception(f"No video found on Pexels for keyword: {keyword}")
-
-    video_data = requests.get(selected_video).content
-    with open(output_filename, "wb") as f:
-        f.write(video_data)
-    print(f"Downloaded: {output_filename}")
-
-async def create_voiceover(text, output_audio):
-    print(f"Synthesizing voiceover -> {output_audio}...")
-    communicate = edge_tts.Communicate(text, "en-US-ChristopherNeural")
-    await communicate.save(output_audio)
-
-def get_media_duration(file_path):
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries",
-        "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file_path
-    ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    return float(result.stdout)
-
-def assemble_scene(video_file, audio_file, output_scene_file):
-    audio_dur = get_media_duration(audio_file)
-    print(f"Assembling scene: {output_scene_file} (Duration: {audio_dur:.2f}s)...")
+    video_url = data["videos"][0]["video_files"][0]["link"]
     
-    cmd = [
-        "ffmpeg", "-y",
-        "-stream_loop", "-1", "-i", video_file,
-        "-i", audio_file,
-        "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080",
-        "-t", str(audio_dur),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-shortest", output_scene_file
-    ]
-    subprocess.run(cmd, check=True)
+    print(f"Downloading video to {output_filename}...")
+    vid_res = requests.get(video_url)
+    with open(output_filename, 'wb') as f:
+        f.write(vid_res.content)
+    return True
 
-def concatenate_scenes(scene_files, final_output="final_documentary.mp4"):
-    print("Stitching all scenes into finished video...")
-    with open("concat_list.txt", "w") as f:
-        for sf in scene_files:
-            f.write(f"file '{sf}'\n")
+def main():
+    topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
+    print(f"Generating documentary for: {topic}")
+    
+    script_data = generate_script(topic)
+    
+    # Save script and metadata
+    with open("metadata.txt", "w") as f:
+        f.write(f"Title: {script_data['title']}\n")
+        f.write(f"Description: {script_data['description']}\n")
+        
+    valid_scenes = []
+    
+    for scene in script_data["scenes"]:
+        sn = scene["scene_number"]
+        narration = scene["narration"]
+        keyword = scene["broll_keyword"]
+        
+        # Step A: Generate Audio and Synchronized Subtitles
+        print(f"Generating audio and subtitles for Scene {sn}...")
+        subprocess.run([
+            "edge-tts",
+            "--text", narration,
+            "--write-media", f"audio_{sn}.mp3",
+            "--write-subtitles", f"subs_{sn}.vtt"
+        ], check=True)
+        
+        # Step B: Download B-roll
+        if not download_pexels_video(keyword, f"video_{sn}.mp4"):
+            continue
             
-    cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        # Step C: Merge Video, Audio, and Burn High-Contrast Subtitles
+        print(f"Merging Scene {sn} with subtitles and locked framerate...")
+        subprocess.run([
+            "ffmpeg",
+            "-stream_loop", "-1", 
+            "-i", f"video_{sn}.mp4",
+            "-i", f"audio_{sn}.mp3",
+            "-vf", f"fps=30,subtitles=subs_{sn}.vtt:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=2,Alignment=2'",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-shortest", 
+            "-y", f"scene_{sn}_final.mp4"
+        ], check=True)
+        
+        valid_scenes.append(f"file 'scene_{sn}_final.mp4'")
+        
+    # Step D: Final Assembly of All Scenes
+    with open("concat_list.txt", "w") as f:
+        f.write("\n".join(valid_scenes))
+        
+    print("Stitching final documentary...")
+    subprocess.run([
+        "ffmpeg",
+        "-f", "concat",
+        "-safe", "0",
         "-i", "concat_list.txt",
-        "-c", "copy", final_output
-    ]
-    subprocess.run(cmd, check=True)
-    print(f"Video assembly complete: {final_output}")
-
-async def main():
-    os.makedirs("workspace", exist_ok=True)
-    data = generate_script(TOPIC)
-    print(f"\nDocumentary Title: {data['title']}\n")
+        "-c", "copy",
+        "-y", "final_documentary.mp4"
+    ], check=True)
     
-    scene_outputs = []
-    for scene in data["scenes"]:
-        num = scene["scene_number"]
-        v_file = f"workspace/broll_{num}.mp4"
-        a_file = f"workspace/audio_{num}.mp3"
-        s_file = f"workspace/scene_{num}.mp4"
-        
-        download_pexels_video(scene["broll_keyword"], v_file)
-        await create_voiceover(scene["narration"], a_file)
-        assemble_scene(v_file, a_file, s_file)
-        scene_outputs.append(s_file)
-        
-    concatenate_scenes(scene_outputs, "final_documentary.mp4")
+    print("Documentary rendered successfully!")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
