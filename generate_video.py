@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import requests
 import subprocess
@@ -94,7 +93,15 @@ def main():
         if not download_pexels_video(keyword, f"video_{sn}.mp4"):
             continue
             
-        # Step C: Merge Video, Audio, and Burn High-Contrast Subtitles
+        # Step C: Extract exact audio duration to prevent infinite loops
+        print(f"Calculating precise audio duration for Scene {sn}...")
+        duration = subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries",
+            "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+            f"audio_{sn}.mp3"
+        ]).decode('utf-8').strip()
+            
+        # Step D: Merge Video, Audio, and Burn High-Contrast Subtitles using exact duration
         print(f"Merging Scene {sn} with subtitles and locked framerate...")
         subprocess.run([
             "ffmpeg",
@@ -105,13 +112,13 @@ def main():
             "-c:v", "libx264",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-shortest", 
+            "-t", duration, 
             "-y", f"scene_{sn}_final.mp4"
         ], check=True)
         
         valid_scenes.append(f"file 'scene_{sn}_final.mp4'")
         
-    # Step D: Final Assembly of All Scenes
+    # Step E: Final Assembly of All Scenes
     with open("concat_list.txt", "w") as f:
         f.write("\n".join(valid_scenes))
         
