@@ -16,18 +16,24 @@ client = genai.Client(api_key=GEMINI_KEY)
 
 def generate_script(topic):
     prompt = f"""
-    You are an elite investigative business documentarian.
-    Write a 3-scene documentary script about: {topic}
-
+    You are an elite YouTube documentary producer for a high-RPM short-form finance channel.
+    Write a hyper-engaging, fast-paced 5-scene script about: {topic}.
+    
+    RULES FOR MAXIMUM RETENTION:
+    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal mistake, or an aggressive question). 
+    2. Write in short, punchy, dramatic sentences. No long, boring explanations. 
+    3. Keep each scene's narration extremely brief (under 10 seconds of speech per scene) to force fast visual cuts.
+    4. B-roll keywords must be simple, 1-2 words (e.g., "money", "office", "graph", "panic", "crowd").
+    
     Return your response strictly as valid JSON matching this format:
     {{
         "title": "Compelling Title",
-        "description": "Engaging description",
+        "description": "Engaging description with tags",
         "scenes": [
             {{
                 "scene_number": 1,
-                "narration": "Full narration text...",
-                "broll_keyword": "simple search term for stock footage"
+                "narration": "Short punchy hook narration...",
+                "broll_keyword": "keyword"
             }}
         ]
     }}
@@ -38,6 +44,7 @@ def generate_script(topic):
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
+            temperature=0.8,
         )
     )
     return json.loads(response.text)
@@ -64,11 +71,10 @@ def download_pexels_video(keyword, output_filename):
 
 def main():
     topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
-    print(f"Generating documentary for: {topic}")
+    print(f"Generating high-retention documentary for: {topic}")
     
     script_data = generate_script(topic)
     
-    # Save script and metadata
     with open("metadata.txt", "w") as f:
         f.write(f"Title: {script_data['title']}\n")
         f.write(f"Description: {script_data['description']}\n")
@@ -80,7 +86,6 @@ def main():
         narration = scene["narration"]
         keyword = scene["broll_keyword"]
         
-        # Step A: Generate Audio and Synchronized Subtitles
         print(f"Generating audio and subtitles for Scene {sn}...")
         subprocess.run([
             "edge-tts",
@@ -89,40 +94,38 @@ def main():
             "--write-subtitles", f"subs_{sn}.vtt"
         ], check=True)
         
-        # Step B: Download B-roll
         if not download_pexels_video(keyword, f"video_{sn}.mp4"):
             continue
             
-        # Step C: Extract exact audio duration to prevent infinite loops
-        print(f"Calculating precise audio duration for Scene {sn}...")
+        print(f"Calculating exact audio duration for Scene {sn}...")
         duration = subprocess.check_output([
             "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
             
-        # Step D: Merge Video, Audio, and Burn High-Contrast Subtitles using exact duration
-        print(f"Merging Scene {sn} with subtitles and locked framerate...")
+        print(f"Merging Scene {sn}: rebuilding timestamps, cropping, and burning captions...")
+        # Note the addition of setpts=N/FRAME_RATE/TB to fix jumping and audio cuts
         subprocess.run([
             "ffmpeg",
             "-stream_loop", "-1", 
             "-i", f"video_{sn}.mp4",
             "-i", f"audio_{sn}.mp3",
-            "-vf", f"fps=30,subtitles=subs_{sn}.vtt:force_style='FontSize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=2,Alignment=2'",
+            "-vf", f"fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setpts=N/FRAME_RATE/TB,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2'",
             "-c:v", "libx264",
+            "-preset", "fast",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-t", duration, 
+            "-t", str(duration), 
             "-y", f"scene_{sn}_final.mp4"
         ], check=True)
         
         valid_scenes.append(f"file 'scene_{sn}_final.mp4'")
         
-    # Step E: Final Assembly of All Scenes
     with open("concat_list.txt", "w") as f:
         f.write("\n".join(valid_scenes))
         
-    print("Stitching final documentary...")
+    print("Stitching final bug-free documentary...")
     subprocess.run([
         "ffmpeg",
         "-f", "concat",
@@ -132,7 +135,7 @@ def main():
         "-y", "final_documentary.mp4"
     ], check=True)
     
-    print("Documentary rendered successfully!")
+    print("Master documentary rendered successfully!")
 
 if __name__ == "__main__":
     main()
