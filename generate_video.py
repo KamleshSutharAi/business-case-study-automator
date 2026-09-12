@@ -16,13 +16,13 @@ client = genai.Client(api_key=GEMINI_KEY)
 def generate_script(topic):
     prompt = f"""
     You are an elite YouTube documentary producer for a high-RPM American finance channel.
-    Write a hyper-engaging, fast-paced 5-scene script about: {topic}.
+    Write a comprehensive, hyper-engaging 15-scene documentary script about: {topic}.
     
-    RULES FOR MAXIMUM RETENTION (US AUDIENCE):
-    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal business mistake, or an aggressive question). 
-    2. Write in short, punchy, dramatic American English sentences. Use high-stakes storytelling.
-    3. Keep each scene's narration extremely brief (under 8 seconds of speech) to force fast visual cuts.
-    4. B-roll keywords must be simple, 1-2 words (e.g., "money", "office", "graph", "panic", "crowd").
+    RULES FOR 8-10 MINUTE RETENTION (US AUDIENCE):
+    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal business mistake). 
+    2. Write in punchy, dramatic American English. Use high-stakes storytelling to keep viewers hooked for 10 minutes.
+    3. LENGTH REQUIREMENT: Every single scene's narration MUST be highly detailed (at least 60 to 80 words per scene). Do not output short sentences. The total spoken word count must support an 8 to 10-minute runtime.
+    4. B-roll keywords must be simple, 1-2 words (e.g., "money", "office", "graph", "panic", "skyscraper").
     
     Return your response strictly as valid JSON matching this format:
     {{
@@ -31,19 +31,21 @@ def generate_script(topic):
         "scenes": [
             {{
                 "scene_number": 1,
-                "narration": "Short punchy hook narration...",
+                "narration": "Long, detailed, high-stakes narration...",
                 "broll_keyword": "keyword"
             }}
         ]
     }}
     """
     
+    # Using a higher max_output_tokens to ensure the long JSON isn't cut off
     response = client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.8,
+            max_output_tokens=8000, 
         )
     )
     return json.loads(response.text)
@@ -57,10 +59,14 @@ def download_pexels_video(keyword, output_filename):
     
     data = res.json()
     if not data.get("videos"):
-        print(f"No video found for {keyword}, skipping...")
-        return False
-        
-    video_url = data["videos"][0]["video_files"][0]["link"]
+        print(f"No video found for {keyword}. Using fallback 'business'...")
+        fallback_url = f"https://api.pexels.com/videos/search?query=business&per_page=5&orientation=landscape&size=medium"
+        fallback_res = requests.get(fallback_url, headers=headers).json()
+        if not fallback_res.get("videos"):
+            return False
+        video_url = fallback_res["videos"][0]["video_files"][0]["link"]
+    else:
+        video_url = data["videos"][0]["video_files"][0]["link"]
     
     print(f"Downloading video to {output_filename}...")
     vid_res = requests.get(video_url)
@@ -70,7 +76,7 @@ def download_pexels_video(keyword, output_filename):
 
 def main():
     topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
-    print(f"Generating highly compressed, American-targeted documentary for: {topic}")
+    print(f"Generating 8-10 minute American documentary for: {topic}")
     
     script_data = generate_script(topic)
     
@@ -86,10 +92,10 @@ def main():
         keyword = scene["broll_keyword"]
         
         print(f"Generating American voiceover and subtitles for Scene {sn}...")
-        # Added American Male Voice (Christopher)
         subprocess.run([
             "edge-tts",
             "--voice", "en-US-ChristopherNeural",
+            "--rate", "+5%", 
             "--text", narration,
             "--write-media", f"audio_{sn}.mp3",
             "--write-subtitles", f"subs_{sn}.vtt"
@@ -105,7 +111,7 @@ def main():
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
             
-        print(f"Merging Scene {sn}: locking timestamps and compressing...")
+        print(f"Merging Scene {sn}: locking timestamps for long-form looping...")
         subprocess.run([
             "ffmpeg",
             "-stream_loop", "-1", 
@@ -129,7 +135,7 @@ def main():
     with open("concat_list.txt", "w") as f:
         f.write("\n".join(valid_scenes))
         
-    print("Stitching final bug-free documentary...")
+    print("Stitching final long-form documentary...")
     subprocess.run([
         "ffmpeg",
         "-f", "concat",
@@ -139,7 +145,7 @@ def main():
         "-y", "final_documentary.mp4"
     ], check=True)
     
-    print("Master documentary rendered successfully!")
+    print("Master long-form documentary rendered successfully!")
 
 if __name__ == "__main__":
     main()
