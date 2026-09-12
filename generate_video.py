@@ -5,7 +5,6 @@ import subprocess
 from google import genai
 from google.genai import types
 
-# 1. Fetch API Keys from GitHub Secrets
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 PEXELS_KEY = os.getenv("PEXELS_API_KEY")
 
@@ -16,13 +15,13 @@ client = genai.Client(api_key=GEMINI_KEY)
 
 def generate_script(topic):
     prompt = f"""
-    You are an elite YouTube documentary producer for a high-RPM short-form finance channel.
+    You are an elite YouTube documentary producer for a high-RPM American finance channel.
     Write a hyper-engaging, fast-paced 5-scene script about: {topic}.
     
-    RULES FOR MAXIMUM RETENTION:
-    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal mistake, or an aggressive question). 
-    2. Write in short, punchy, dramatic sentences. No long, boring explanations. 
-    3. Keep each scene's narration extremely brief (under 10 seconds of speech per scene) to force fast visual cuts.
+    RULES FOR MAXIMUM RETENTION (US AUDIENCE):
+    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal business mistake, or an aggressive question). 
+    2. Write in short, punchy, dramatic American English sentences. Use high-stakes storytelling.
+    3. Keep each scene's narration extremely brief (under 8 seconds of speech) to force fast visual cuts.
     4. B-roll keywords must be simple, 1-2 words (e.g., "money", "office", "graph", "panic", "crowd").
     
     Return your response strictly as valid JSON matching this format:
@@ -71,7 +70,7 @@ def download_pexels_video(keyword, output_filename):
 
 def main():
     topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
-    print(f"Generating high-retention documentary for: {topic}")
+    print(f"Generating highly compressed, American-targeted documentary for: {topic}")
     
     script_data = generate_script(topic)
     
@@ -86,9 +85,11 @@ def main():
         narration = scene["narration"]
         keyword = scene["broll_keyword"]
         
-        print(f"Generating audio and subtitles for Scene {sn}...")
+        print(f"Generating American voiceover and subtitles for Scene {sn}...")
+        # Added American Male Voice (Christopher)
         subprocess.run([
             "edge-tts",
+            "--voice", "en-US-ChristopherNeural",
             "--text", narration,
             "--write-media", f"audio_{sn}.mp3",
             "--write-subtitles", f"subs_{sn}.vtt"
@@ -104,18 +105,21 @@ def main():
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
             
-        print(f"Merging Scene {sn}: rebuilding timestamps, cropping, and burning captions...")
-        # Note the addition of setpts=N/FRAME_RATE/TB to fix jumping and audio cuts
+        print(f"Merging Scene {sn}: locking timestamps and compressing...")
         subprocess.run([
             "ffmpeg",
             "-stream_loop", "-1", 
             "-i", f"video_{sn}.mp4",
             "-i", f"audio_{sn}.mp3",
-            "-vf", f"fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setpts=N/FRAME_RATE/TB,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2'",
+            "-vf", f"fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setpts=PTS-STARTPTS,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2'",
             "-c:v", "libx264",
-            "-preset", "fast",
+            "-preset", "veryfast",
+            "-crf", "28",
             "-c:a", "aac",
-            "-b:a", "192k",
+            "-b:a", "128k",
+            "-ac", "2",
+            "-ar", "44100",
+            "-video_track_timescale", "90000",
             "-t", str(duration), 
             "-y", f"scene_{sn}_final.mp4"
         ], check=True)
