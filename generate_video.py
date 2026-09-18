@@ -1,30 +1,30 @@
 import os
 import json
+import urllib.parse
 import requests
 import subprocess
-import time
 from google import genai
 from google.genai import types
 
-# 1. Fetch API Keys from GitHub Secrets
+# 1. Fetch Gemini API Key from GitHub Secrets
+# Note: Pexels and Pixazo keys are no longer required for this zero-cost AI pipeline.
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-PEXELS_KEY = os.getenv("PEXELS_API_KEY")
 
-if not GEMINI_KEY or not PEXELS_KEY:
-    raise ValueError("Missing API keys. Check GitHub Secrets.")
+if not GEMINI_KEY:
+    raise ValueError("Missing GEMINI_API_KEY in GitHub Secrets.")
 
 client = genai.Client(api_key=GEMINI_KEY)
 
 def generate_script(topic):
     prompt = f"""
-    You are an elite YouTube documentary producer for a high-RPM short-form finance channel.
-    Write a hyper-engaging, fast-paced 5-scene script about: {topic}.
+    You are an elite YouTube documentary producer for a high-RPM finance channel.
+    Write a fast-paced 5-scene script about: {topic}.
     
-    RULES FOR MAXIMUM RETENTION:
-    1. Scene 1 MUST start with a shocking 3-second hook (e.g., a massive dollar amount, a fatal mistake, or an aggressive question). 
-    2. Write in short, punchy, dramatic sentences. No long, boring explanations. 
-    3. Keep each scene's narration extremely brief (under 10 seconds of speech per scene) to force fast visual cuts.
-    4. B-roll keywords must be simple, 1-2 words (e.g., "money", "office", "graph", "panic", "crowd").
+    RULES:
+    1. Scene 1 MUST start with a shocking 3-second hook.
+    2. Write in short, punchy, dramatic sentences.
+    3. Keep each scene's narration under 8 seconds.
+    4. B-roll keywords must be highly descriptive visual prompts for an AI image generator (e.g., "abandoned wall street trading floor in panic", "close up of hands counting money").
     
     Return your response strictly as valid JSON matching this format:
     {{
@@ -33,60 +33,63 @@ def generate_script(topic):
         "scenes": [
             {{
                 "scene_number": 1,
-                "narration": "Short punchy hook narration...",
-                "broll_keyword": "keyword"
+                "narration": "Short punchy phrase.",
+                "broll_keyword": "visual description"
             }}
         ]
     }}
     """
     
-    max_retries = 5
-    wait_time = 15
-    
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.6-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    temperature=0.8,
-                )
-            )
-            return json.loads(response.text)
-        except Exception as e:
-            if "503" in str(e) or "UNAVAILABLE" in str(e):
-                print(f"Gemini server overloaded (503). Retrying in {wait_time} seconds... (Attempt {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-                wait_time *= 2  # Exponential backoff
-            else:
-                raise e
-                
-    raise Exception("Failed to generate script after multiple retries due to server overload.")
+    response = client.models.generate_content(
+        model="gemini-3.6-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.8,
+        )
+    )
+    return json.loads(response.text)
 
-def download_pexels_video(keyword, output_filename):
-    print(f"Searching Pexels for B-roll: {keyword}")
-    headers = {"Authorization": PEXELS_KEY}
-    url = f"https://api.pexels.com/videos/search?query={keyword}&per_page=15&orientation=landscape&size=medium"
-    res = requests.get(url, headers=headers)
-    res.raise_for_status()
+def generate_free_ai_scene(prompt, output_mp4, duration):
+    print(f"Generating free AI image for: {prompt}")
     
-    data = res.json()
-    if not data.get("videos"):
-        print(f"No video found for {keyword}, skipping...")
-        return False
+    # Generate Free AI Image via Pollinations (No API Key Required)
+    safe_prompt = urllib.parse.quote(prompt + ", highly detailed cinematic documentary style, 4k resolution")
+    image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
+    
+    image_filename = "temp_scene.jpg"
+    response = requests.get(image_url)
+    if response.status_code != 200:
+        print("Failed to generate AI image. Falling back to default.")
+        safe_prompt = urllib.parse.quote("cinematic dark business office background")
+        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
+        response = requests.get(image_url)
         
-    video_url = data["videos"][0]["video_files"][0]["link"]
+    with open(image_filename, 'wb') as f:
+        f.write(response.content)
+        
+    print(f"Animating AI image into a {duration}s video clip using FFmpeg zoompan...")
     
-    print(f"Downloading video to {output_filename}...")
-    vid_res = requests.get(video_url)
-    with open(output_filename, 'wb') as f:
-        f.write(vid_res.content)
+    # Animate with FFmpeg Zoom & Pan (Ken Burns effect)
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", image_filename,
+        "-vf", f"zoompan=z='min(zoom+0.001,1.15)':d={int(float(duration)*30)}:s=1920x1080:fps=30",
+        "-c:v", "libx264",
+        "-t", str(duration),
+        "-pix_fmt", "yuv420p",
+        output_mp4
+    ], check=True)
+    
+    if os.path.exists(image_filename):
+        os.remove(image_filename)
+        
     return True
 
 def main():
     topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
-    print(f"Generating high-retention documentary for: {topic}")
+    print(f"Generating premium AI documentary for: {topic}")
     
     script_data = generate_script(topic)
     
@@ -101,37 +104,41 @@ def main():
         narration = scene["narration"]
         keyword = scene["broll_keyword"]
         
-        print(f"Generating audio and subtitles for Scene {sn}...")
+        print(f"Generating voiceover and subtitles for Scene {sn}...")
         subprocess.run([
             "edge-tts",
+            "--voice", "en-US-ChristopherNeural",
             "--text", narration,
             "--write-media", f"audio_{sn}.mp3",
             "--write-subtitles", f"subs_{sn}.vtt"
         ], check=True)
         
-        if not download_pexels_video(keyword, f"video_{sn}.mp4"):
-            continue
-            
-        print(f"Calculating exact audio duration for Scene {sn}...")
+        # Calculate precise audio duration
         duration = subprocess.check_output([
             "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
+        
+        # Generate and animate custom AI visual
+        if not generate_free_ai_scene(keyword, f"video_{sn}.mp4", duration):
+            continue
             
-        print(f"Merging Scene {sn}: rebuilding timestamps, cropping, and burning captions...")
+        print(f"Merging Scene {sn}: locking subtitles with smart word-wrap and side margins...")
+        
         subprocess.run([
-            "ffmpeg",
-            "-stream_loop", "-1", 
+            "ffmpeg", "-y",
             "-i", f"video_{sn}.mp4",
             "-i", f"audio_{sn}.mp3",
-            "-vf", f"fps=30,scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setpts=N/FRAME_RATE/TB,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=1,Alignment=2'",
+            "-vf", f"subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginL=150,MarginR=150,MarginV=60,WrapStyle=1'",
             "-c:v", "libx264",
-            "-preset", "fast",
+            "-preset", "veryfast",
+            "-crf", "28",
             "-c:a", "aac",
-            "-b:a", "192k",
-            "-t", str(duration), 
-            "-y", f"scene_{sn}_final.mp4"
+            "-b:a", "128k",
+            "-ac", "2",
+            "-ar", "44100",
+            f"scene_{sn}_final.mp4"
         ], check=True)
         
         valid_scenes.append(f"file 'scene_{sn}_final.mp4'")
@@ -139,17 +146,17 @@ def main():
     with open("concat_list.txt", "w") as f:
         f.write("\n".join(valid_scenes))
         
-    print("Stitching final bug-free documentary...")
+    print("Stitching final premium AI documentary...")
     subprocess.run([
-        "ffmpeg",
+        "ffmpeg", "-y",
         "-f", "concat",
         "-safe", "0",
         "-i", "concat_list.txt",
         "-c", "copy",
-        "-y", "final_documentary.mp4"
+        "final_documentary.mp4"
     ], check=True)
     
-    print("Master documentary rendered successfully!")
+    print("Master AI documentary rendered successfully!")
 
 if __name__ == "__main__":
     main()
