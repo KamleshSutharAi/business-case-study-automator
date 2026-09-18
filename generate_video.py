@@ -1,40 +1,60 @@
 import os
+import re
 import json
 import urllib.parse
 import requests
 import subprocess
 from google import genai
 from google.genai import types
+from youtube_transcript_api import YouTubeTranscriptApi
 
-# 1. Fetch Gemini API Key from GitHub Secrets
-# Note: Pexels and Pixazo keys are no longer required for this zero-cost AI pipeline.
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-
 if not GEMINI_KEY:
     raise ValueError("Missing GEMINI_API_KEY in GitHub Secrets.")
 
 client = genai.Client(api_key=GEMINI_KEY)
 
-def generate_script(topic):
+def extract_video_id(url):
+    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+    return match.group(1) if match else url
+
+def fetch_competitor_transcript(video_url):
+    video_id = extract_video_id(video_url)
+    print(f"Extracting transcript for video ID: {video_id}...")
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_text = " ".join([item['text'] for item in transcript_list])
+        print("Transcript successfully extracted.")
+        return transcript_text[:12000]
+    except Exception as e:
+        print(f"Could not extract transcript ({e}). Falling back to general analysis.")
+        return "High-retention documentary autopsy style with sharp hook and rapid cuts."
+
+def reverse_engineer_and_generate(competitor_transcript, new_topic):
+    print("Reverse-engineering formula and writing new script with Gemini...")
     prompt = f"""
-    You are an elite YouTube documentary producer for a high-RPM finance channel.
-    Write a fast-paced 5-scene script about: {topic}.
+    You are an elite YouTube documentary strategist.
     
-    RULES:
-    1. Scene 1 MUST start with a shocking 3-second hook.
-    2. Write in short, punchy, dramatic sentences.
-    3. Keep each scene's narration under 8 seconds.
-    4. B-roll keywords must be highly descriptive visual prompts for an AI image generator (e.g., "abandoned wall street trading floor in panic", "close up of hands counting money").
+    1. Analyze this viral competitor transcript:
+    \"\"\"{competitor_transcript}\"\"\"
     
-    Return your response strictly as valid JSON matching this format:
+    2. Deconstruct their retention formula:
+       - Hook intensity (shock stat, mystery, or existential threat)
+       - Narration cadence (sentence length, dramatic tone)
+       - Structural progression (Hook -> Escalation -> Turning Point -> Fallout)
+    
+    3. Write a 100% ORIGINAL 5-scene documentary script about: "{new_topic}".
+       Apply their exact structural pacing, hook style, and narrative momentum.
+    
+    Return strictly a JSON object:
     {{
-        "title": "Compelling Title",
+        "title": "High-CTR Title",
         "description": "Engaging description with tags",
         "scenes": [
             {{
                 "scene_number": 1,
-                "narration": "Short punchy phrase.",
-                "broll_keyword": "visual description"
+                "narration": "Short, punchy narration line...",
+                "broll_keyword": "descriptive visual prompt for AI image generator"
             }}
         ]
     }}
@@ -45,32 +65,25 @@ def generate_script(topic):
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            temperature=0.8,
+            temperature=0.7,
         )
     )
     return json.loads(response.text)
 
 def generate_free_ai_scene(prompt, output_mp4, duration):
-    print(f"Generating free AI image for: {prompt}")
-    
-    # Generate Free AI Image via Pollinations (No API Key Required)
-    safe_prompt = urllib.parse.quote(prompt + ", highly detailed cinematic documentary style, 4k resolution")
+    print(f"Generating AI visual for: {prompt}")
+    safe_prompt = urllib.parse.quote(prompt + ", cinematic documentary style, 4k resolution")
     image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
     
     image_filename = "temp_scene.jpg"
     response = requests.get(image_url)
     if response.status_code != 200:
-        print("Failed to generate AI image. Falling back to default.")
-        safe_prompt = urllib.parse.quote("cinematic dark business office background")
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
-        response = requests.get(image_url)
+        fallback = urllib.parse.quote("dark corporate finance boardroom background")
+        response = requests.get(f"https://image.pollinations.ai/prompt/{fallback}?width=1920&height=1080&nologo=true")
         
     with open(image_filename, 'wb') as f:
         f.write(response.content)
         
-    print(f"Animating AI image into a {duration}s video clip using FFmpeg zoompan...")
-    
-    # Animate with FFmpeg Zoom & Pan (Ken Burns effect)
     subprocess.run([
         "ffmpeg", "-y",
         "-loop", "1",
@@ -84,14 +97,14 @@ def generate_free_ai_scene(prompt, output_mp4, duration):
     
     if os.path.exists(image_filename):
         os.remove(image_filename)
-        
     return True
 
 def main():
-    topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
-    print(f"Generating premium AI documentary for: {topic}")
+    competitor_url = os.getenv("COMPETITOR_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    new_topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
     
-    script_data = generate_script(topic)
+    transcript = fetch_competitor_transcript(competitor_url)
+    script_data = reverse_engineer_and_generate(transcript, new_topic)
     
     with open("metadata.txt", "w") as f:
         f.write(f"Title: {script_data['title']}\n")
@@ -113,19 +126,16 @@ def main():
             "--write-subtitles", f"subs_{sn}.vtt"
         ], check=True)
         
-        # Calculate precise audio duration
         duration = subprocess.check_output([
             "ffprobe", "-v", "error", "-show_entries",
             "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
         
-        # Generate and animate custom AI visual
         if not generate_free_ai_scene(keyword, f"video_{sn}.mp4", duration):
             continue
             
-        print(f"Merging Scene {sn}: locking subtitles with smart word-wrap and side margins...")
-        
+        print(f"Merging Scene {sn}...")
         subprocess.run([
             "ffmpeg", "-y",
             "-i", f"video_{sn}.mp4",
@@ -146,7 +156,6 @@ def main():
     with open("concat_list.txt", "w") as f:
         f.write("\n".join(valid_scenes))
         
-    print("Stitching final premium AI documentary...")
     subprocess.run([
         "ffmpeg", "-y",
         "-f", "concat",
@@ -156,7 +165,7 @@ def main():
         "final_documentary.mp4"
     ], check=True)
     
-    print("Master AI documentary rendered successfully!")
+    print("Done! final_documentary.mp4 is ready.")
 
 if __name__ == "__main__":
     main()
