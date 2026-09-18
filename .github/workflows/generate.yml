@@ -3,8 +3,12 @@ name: Generate Business Documentary
 on:
   workflow_dispatch:
     inputs:
+      competitor_url:
+        description: 'Competitor YouTube URL to Analyze'
+        required: true
+        default: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
       topic:
-        description: 'Business Case Study Topic'
+        description: 'Your New Topic'
         required: true
         default: 'The Collapse of Toys R Us'
 
@@ -25,13 +29,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
       - name: Install Python Dependencies
-        run: pip install google-genai requests edge-tts
+        run: pip install google-genai requests edge-tts youtube-transcript-api
 
       - name: Run Video Generator
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          VIDEO_TOPIC: ${{ github.event.inputs.topic }}
+          COMPETITOR_URL: ${{ github.event.inputs.competitor_url }}
+          TOPIC: ${{ github.event.inputs.topic }}
         run: python generate_video.py
 
       - name: Upload Finished Video as Artifact
