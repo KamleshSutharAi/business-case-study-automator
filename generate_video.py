@@ -4,6 +4,7 @@ import json
 import urllib.parse
 import requests
 import subprocess
+import time
 from google import genai
 from google.genai import types
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -15,12 +16,9 @@ if not GEMINI_KEY:
 
 client = genai.Client(api_key=GEMINI_KEY)
 
-def extract_video_id(url):
-    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
-    return match.group(1) if match else url
-
 def fetch_competitor_transcript(video_url):
-    video_id = extract_video_id(video_url)
+    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", video_url)
+    video_id = match.group(1) if match else video_url
     print(f"Extracting transcript for video ID: {video_id}...")
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
@@ -43,10 +41,10 @@ def reverse_engineer_and_generate(competitor_transcript, new_topic):
     3. Write a 100% ORIGINAL 5-scene documentary script about: "{new_topic}".
        Apply their exact structural pacing, hook style, and narrative momentum.
        
-    RULES FOR MAGNATESMEDIA PACING:
+    RULES FOR VISUALS & PACING:
     - WRITE IN EXTREMELY SHORT PHRASES. Maximum 5 to 7 words per sentence.
     - Keep each scene's total narration under 8 seconds.
-    - 'visual_search_term' MUST be a specific, real-world entity or concept for an image search (e.g., "Enron headquarters", "Wall Street panic", "Steve Jobs").
+    - VISUAL VARIETY IS MANDATORY. Alternate between showing Real Historical Figures, Financial Data, and Cinematic B-Roll.
     
     Return strictly a JSON object matching this format:
     {{
@@ -56,41 +54,62 @@ def reverse_engineer_and_generate(competitor_transcript, new_topic):
             {{
                 "scene_number": 1,
                 "narration": "Short, punchy narration line...",
-                "visual_search_term": "descriptive visual prompt"
+                "visual_source": "wikipedia",
+                "visual_search_term": "Adam Neumann"
             }}
         ]
     }}
+    Note: Set 'visual_source' to 'wikipedia' ONLY for specific famous people, companies, or logos (e.g., 'Adam Neumann', 'Enron Logo'). Set to 'pollinations' for abstract concepts (e.g., 'financial stock chart crashing red', 'dark empty conference room').
     """
     
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.7,
-        )
-    )
-    return json.loads(response.text)
+    max_retries = 5
+    wait_time = 15
+    
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.7,
+                )
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            if "503" in str(e) or "UNAVAILABLE" in str(e):
+                print(f"Gemini server overloaded (503). Retrying in {wait_time} seconds... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                wait_time *= 2 
+            else:
+                raise e
+                
+    raise Exception("Failed to generate script after multiple retries due to server overload.")
 
-def create_magnates_style_scene(search_query, output_mp4, duration):
-    print(f"Fetching archival media for: {search_query}...")
+def create_magnates_style_scene(source, search_query, output_mp4, duration):
+    print(f"Fetching visual for: {search_query} (Source: {source})...")
     
-    # 1. Fetch free public domain photo from Wikimedia API
-    api_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&prop=pageimages&piprop=original&titles={urllib.parse.quote(search_query)}"
-    headers = {"User-Agent": "YouTubeDocBot/1.0"}
-    res = requests.get(api_url, headers=headers).json()
-    
-    pages = res.get("query", {}).get("pages", {})
     image_url = None
-    for page_id, data in pages.items():
-        if "original" in data:
-            image_url = data["original"]["source"]
-            break
-            
-    # Fallback to Pollinations AI if no historical photo exists
+    
+    # 1. Attempt to fetch real historical press photo from Wikipedia API
+    if source == "wikipedia":
+        api_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={urllib.parse.quote(search_query)}&gsrlimit=1&prop=pageimages&piprop=original"
+        headers = {"User-Agent": "YouTubeDocBot/1.0"}
+        try:
+            res = requests.get(api_url, headers=headers).json()
+            pages = res.get("query", {}).get("pages", {})
+            for page_id, data in pages.items():
+                if "original" in data:
+                    image_url = data["original"]["source"]
+                    print(f"Successfully located Wikipedia Archival Photo for: {search_query}")
+                    break
+        except Exception as e:
+            print(f"Wikipedia search failed: {e}")
+
+    # 2. Fallback to AI generation with unique seed to prevent caching
     if not image_url:
-        safe_prompt = urllib.parse.quote(f"{search_query}, dark investigative documentary scene, cinematic 4k")
-        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true"
+        safe_prompt = urllib.parse.quote(f"{search_query}, dark investigative documentary style, cinematic 4k")
+        image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true&seed={int(float(duration)*100)}"
 
     try:
         img_data = requests.get(image_url).content
@@ -102,14 +121,14 @@ def create_magnates_style_scene(search_query, output_mp4, duration):
         with open("archival_temp.jpg", "wb") as f:
             f.write(img_data)
         
-    print(f"Applying dark documentary grade, vignette, and 2.5D zoom (Duration: {duration}s)...")
+    print(f"Applying crop (Watermark removal), dark grade, and 2.5D zoom (Duration: {duration}s)...")
     
-    # 2. Render Ken Burns zoom + dark moody vignette in FFmpeg
+    # 3. Crop bottom 40px to eradicate Pollinations watermark, scale to 1080p, and apply Ken Burns
     subprocess.run([
         "ffmpeg", "-y",
         "-loop", "1",
         "-i", "archival_temp.jpg",
-        "-vf", f"zoompan=z='min(zoom+0.0012,1.2)':d={int(float(duration)*30)}:s=1920x1080:fps=30,eq=contrast=1.25:brightness=-0.06:saturation=0.85,vignette=angle=PI/3.5",
+        "-vf", f"crop=1920:1040:0:0,scale=1920:1080,zoompan=z='min(zoom+0.0012,1.2)':d={int(float(duration)*30)}:s=1920x1080:fps=30,eq=contrast=1.15:brightness=-0.04:saturation=0.85,vignette=angle=PI/3.5",
         "-c:v", "libx264",
         "-t", str(duration),
         "-pix_fmt", "yuv420p",
@@ -121,8 +140,8 @@ def create_magnates_style_scene(search_query, output_mp4, duration):
     return True
 
 def main():
-    competitor_url = os.getenv("COMPETITOR_URL", "https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-    new_topic = os.getenv("TOPIC", "The Collapse of Toys R Us")
+    competitor_url = os.getenv("COMPETITOR_URL", "https://www.youtube.com/watch?v=P3QK-32bxgw")
+    new_topic = os.getenv("TOPIC", "The $40 Billion Collapse of WeWork")
     
     transcript = fetch_competitor_transcript(competitor_url)
     script_data = reverse_engineer_and_generate(transcript, new_topic)
@@ -136,6 +155,7 @@ def main():
     for scene in script_data["scenes"]:
         sn = scene["scene_number"]
         narration = scene["narration"]
+        source = scene.get("visual_source", "pollinations")
         keyword = scene["visual_search_term"]
         
         text_file = f"narration_{sn}.txt"
@@ -157,7 +177,7 @@ def main():
             f"audio_{sn}.mp3"
         ]).decode('utf-8').strip()
         
-        create_magnates_style_scene(keyword, f"video_{sn}.mp4", duration)
+        create_magnates_style_scene(source, keyword, f"video_{sn}.mp4", duration)
             
         print(f"Merging Scene {sn}: locking 30fps and 44.1kHz audio with custom captions...")
         subprocess.run([
@@ -183,7 +203,7 @@ def main():
     with open("concat_list.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(valid_scenes))
         
-    print("Stitching final MagnatesMedia-style documentary...")
+    print("Stitching final Master documentary...")
     subprocess.run([
         "ffmpeg", "-y",
         "-f", "concat",
