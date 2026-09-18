@@ -91,7 +91,6 @@ def create_magnates_style_scene(source, search_query, output_mp4, duration):
     
     image_url = None
     
-    # 1. Attempt to fetch real historical press photo from Wikipedia API
     if source == "wikipedia":
         api_url = f"https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch={urllib.parse.quote(search_query)}&gsrlimit=1&prop=pageimages&piprop=original"
         headers = {"User-Agent": "YouTubeDocBot/1.0"}
@@ -106,7 +105,6 @@ def create_magnates_style_scene(source, search_query, output_mp4, duration):
         except Exception as e:
             print(f"Wikipedia search failed: {e}")
 
-    # 2. Fallback to AI generation with unique seed to prevent caching
     if not image_url:
         safe_prompt = urllib.parse.quote(f"{search_query}, dark investigative documentary style, cinematic 4k")
         image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1920&height=1080&nologo=true&seed={int(float(duration)*100)}"
@@ -123,7 +121,6 @@ def create_magnates_style_scene(source, search_query, output_mp4, duration):
         
     print(f"Applying crop (Watermark removal), dark grade, and 2.5D zoom (Duration: {duration}s)...")
     
-    # 3. Crop bottom 40px to eradicate Pollinations watermark, scale to 1080p, and apply Ken Burns
     subprocess.run([
         "ffmpeg", "-y",
         "-loop", "1",
@@ -154,13 +151,14 @@ def main():
     
     for scene in script_data["scenes"]:
         sn = scene["scene_number"]
-        narration = scene["narration"]
+        # FIX: Strip all hidden newlines that push subtitles into the middle of the screen
+        raw_narration = scene["narration"].replace("\n", " ").replace("\r", " ").strip()
         source = scene.get("visual_source", "pollinations")
         keyword = scene["visual_search_term"]
         
         text_file = f"narration_{sn}.txt"
         with open(text_file, "w", encoding="utf-8") as f:
-            f.write(narration)
+            f.write(raw_narration)
             
         print(f"Generating voiceover and subtitles for Scene {sn}...")
         subprocess.run([
@@ -179,12 +177,13 @@ def main():
         
         create_magnates_style_scene(source, keyword, f"video_{sn}.mp4", duration)
             
-        print(f"Merging Scene {sn}: locking 30fps and 44.1kHz audio with custom captions...")
+        print(f"Merging Scene {sn}: locking subtitles to bottom dead-center...")
+        # FIX: WrapStyle reset to 0 to prevent text from being dragged up the screen
         subprocess.run([
             "ffmpeg", "-y",
             "-i", f"video_{sn}.mp4",
             "-i", f"audio_{sn}.mp3",
-            "-vf", f"fps=30,scale=1920:1080,setpts=PTS-STARTPTS,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginL=150,MarginR=150,MarginV=60,WrapStyle=1'",
+            "-vf", f"fps=30,scale=1920:1080,setpts=PTS-STARTPTS,subtitles=subs_{sn}.vtt:force_style='FontName=Arial,FontSize=28,PrimaryColour=&H00FFFF,OutlineColour=&H000000,BorderStyle=1,Outline=3,Shadow=2,Alignment=2,MarginL=150,MarginR=150,MarginV=80,WrapStyle=0'",
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "28",
